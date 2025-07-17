@@ -29,28 +29,39 @@ def extract_forword(text):
     # Extract all forword references from the text
     cleaned = []
     
-    # Method 1: Find all [text](link) inside (See ...) blocks
-    forword_blocks = re.findall(r'\(See ([^)]*)\)', text, flags=re.IGNORECASE)
-    for block in forword_blocks:
+    # Method 1: Find all markdown links [text](link) anywhere in the text first
+    # This catches cases like "**AFFECTIONATE** (See [Love](kent0060.htm#LOVE), [Indifference](kent0050.htm#INDIFFERENCE))"
+    all_markdown_links = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', text)
+    for link_text, link_url in all_markdown_links:
+        # Check if the URL has a # fragment
+        if '#' in link_url:
+            # Use the text after #
+            name = link_url.split('#')[-1].strip()
+        else:
+            # Use the link text
+            name = link_text.strip()
+        
+        # Remove "See" from the beginning
+        name = re.sub(r'^See\s+', '', name, flags=re.IGNORECASE).strip()
+        
+        if name and name.lower() not in ['also', 'and', 'see']:
+            cleaned.append(name.title())
+    
+    # Method 2: Find simple text references in (See ...) blocks that aren't markdown links
+    # Remove all markdown links first, then find remaining text
+    text_without_links = re.sub(r'\[([^\]]+)\]\([^)]+\)', '', text)
+    simple_forword_blocks = re.findall(r'\(See\s+([^)]+)\)', text_without_links, flags=re.IGNORECASE)
+    
+    for block in simple_forword_blocks:
         # Split by comma, 'and', 'also'
         items = re.split(r',|\band\b|\balso\b', block)
         for item in items:
-            # Extract text from markdown link or plain text
-            m = re.match(r'\[([^\]]+)\]\([^)]+\)', item.strip())
-            if m:
-                name = m.group(1).strip()
-            else:
-                name = item.strip()
-            if name and name.lower() not in ['also', 'and']:
+            name = item.strip()
+            # Remove "See" from the beginning
+            name = re.sub(r'^See\s+', '', name, flags=re.IGNORECASE).strip()
+            
+            if name and name.lower() not in ['also', 'and', 'see']:
                 cleaned.append(name.title())
-    
-    # Method 2: Find all standalone markdown links [text](link) anywhere in the text
-    # This catches cases like "**AFFECTIONATE** (See [Love](kent0060.htm#LOVE), [Indifference](kent0050.htm#INDIFFERENCE))"
-    all_markdown_links = re.findall(r'\[([^\]]+)\]\([^)]+\)', text)
-    for link_text in all_markdown_links:
-        name = link_text.strip()
-        if name and name.lower() not in ['also', 'and']:
-            cleaned.append(name.title())
     
     return cleaned
 
@@ -100,7 +111,7 @@ for line in lines:
             'symptom': current_symptom,
             'remedies': ', '.join(main_remedies),
             'modifiers': [],
-            'forword': ', '.join(sorted(set(collected_forwords)))
+            'forword': ', '.join(sorted(set(collected_forwords))) if collected_forwords else ""
         }
         continue
 
@@ -111,7 +122,10 @@ for line in lines:
 
         mod_forwords = extract_forword(remedies_text)
         if mod_forwords:
-            data[current_symptom]['forword'] += ', ' + ', '.join(sorted(set(mod_forwords)))
+            if data[current_symptom]['forword']:
+                data[current_symptom]['forword'] += ', ' + ', '.join(sorted(set(mod_forwords)))
+            else:
+                data[current_symptom]['forword'] = ', '.join(sorted(set(mod_forwords)))
 
         remedies = parse_remedies(clean_remedy_text(remedies_text))
         data[current_symptom]['modifiers'].append(f"{modifier}: {', '.join(remedies)}")
@@ -121,7 +135,7 @@ for item in data.values():
     item['forword'] = ', '.join(sorted(set([f.strip() for f in item['forword'].split(',') if f.strip()])))
 
 # Write to CSV
-with open("kent_cleaned_final.csv", "w", newline='', encoding='utf-8') as f:
+with open("kent_cleaned_updated.csv", "w", newline='', encoding='utf-8') as f:
     writer = csv.DictWriter(f, fieldnames=["section", "symptom", "modifier", "remedies", "forword"])
     writer.writeheader()
     for item in data.values():
@@ -133,4 +147,4 @@ with open("kent_cleaned_final.csv", "w", newline='', encoding='utf-8') as f:
             "forword": item['forword']
         })
 
-print("✅ All done. Saved as 'kent_cleaned_final.csv'")
+print("✅ All done. Saved as 'kent_cleaned_updated.csv'")
