@@ -3,9 +3,14 @@ import csv
 from collections import defaultdict
 
 def parse_remedies(text):
-    # Remove inline "See ..." references
-    text = re.sub(r'\(See\s+.*?\)', '', text)
-
+    if not text or text.strip() == "":
+        return []
+    
+    # Remove all (See ...) blocks and markdown links from remedies
+    text = re.sub(r'\(See [^)]*\)', '', text)
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', '', text)
+    text = re.sub(r'\(\s*\)', '', text)
+    
     # Split and process remedies
     tokens = [t.strip(" ,.") for t in text.split(",") if t.strip()]
     parsed = []
@@ -21,16 +26,32 @@ def parse_remedies(text):
     return parsed
 
 def extract_forword(text):
-    # Collect all "See ..." or "see ..." constructs
-    matches = re.findall(r'\(See\s+(.*?)\)', text, flags=re.IGNORECASE)
+    # Extract all forword references from the text
     cleaned = []
-    for m in matches:
-        # Extract just the keywords from inside "See ..." text
-        items = re.split(r'and|also|,', m)
+    
+    # Method 1: Find all [text](link) inside (See ...) blocks
+    forword_blocks = re.findall(r'\(See ([^)]*)\)', text, flags=re.IGNORECASE)
+    for block in forword_blocks:
+        # Split by comma, 'and', 'also'
+        items = re.split(r',|\band\b|\balso\b', block)
         for item in items:
-            name = re.sub(r'\[.*?\]\(.*?\)', '', item).strip()
-            if name:
+            # Extract text from markdown link or plain text
+            m = re.match(r'\[([^\]]+)\]\([^)]+\)', item.strip())
+            if m:
+                name = m.group(1).strip()
+            else:
+                name = item.strip()
+            if name and name.lower() not in ['also', 'and']:
                 cleaned.append(name.title())
+    
+    # Method 2: Find all standalone markdown links [text](link) anywhere in the text
+    # This catches cases like "**AFFECTIONATE** (See [Love](kent0060.htm#LOVE), [Indifference](kent0050.htm#INDIFFERENCE))"
+    all_markdown_links = re.findall(r'\[([^\]]+)\]\([^)]+\)', text)
+    for link_text in all_markdown_links:
+        name = link_text.strip()
+        if name and name.lower() not in ['also', 'and']:
+            cleaned.append(name.title())
+    
     return cleaned
 
 def clean_remedy_text(text):
@@ -46,7 +67,7 @@ current_symptom = ""
 modifiers = defaultdict(list)
 collected_forwords = []
 
-symptom_pattern = re.compile(r'^\*\*(.+?)\*\*(?:\s*\(See (.+?)\))?\s*:? (.*)?$')
+symptom_pattern = re.compile(r'^\*\*(.+?)\*\*\s*(.*)?$')
 modifier_pattern = re.compile(r'^([a-z0-9 ,\-\.\(\)]+?) ?: (.+)$', re.IGNORECASE)
 
 for line in lines:
@@ -60,19 +81,19 @@ for line in lines:
     match = symptom_pattern.match(line)
     if match:
         current_symptom = match.group(1).strip().title()
-        direct_forword = match.group(2)
-        main_remedies_raw = match.group(3)
+        rest = match.group(2) or ""
 
-        # Extract forwords from within remedy section too
-        collected_forwords = []
+        # Extract forword references from any (See ...) block in rest
+        collected_forwords = extract_forword(rest)
 
-        if direct_forword:
-            collected_forwords += extract_forword(direct_forword)
-
+        # Remove all (See ...) blocks and markdown links from rest to get remedies
+        remedies_text = rest
+        remedies_text = re.sub(r'\(See [^)]*\)', '', remedies_text)
+        remedies_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', '', remedies_text)
+        remedies_text = remedies_text.strip()
         main_remedies = []
-        if main_remedies_raw:
-            collected_forwords += extract_forword(main_remedies_raw)
-            main_remedies = parse_remedies(clean_remedy_text(main_remedies_raw))
+        if remedies_text:
+            main_remedies = parse_remedies(clean_remedy_text(remedies_text))
 
         data[current_symptom] = {
             'section': current_section,
@@ -100,7 +121,7 @@ for item in data.values():
     item['forword'] = ', '.join(sorted(set([f.strip() for f in item['forword'].split(',') if f.strip()])))
 
 # Write to CSV
-with open("kent_cleaned.csv", "w", newline='', encoding='utf-8') as f:
+with open("kent_cleaned_final.csv", "w", newline='', encoding='utf-8') as f:
     writer = csv.DictWriter(f, fieldnames=["section", "symptom", "modifier", "remedies", "forword"])
     writer.writeheader()
     for item in data.values():
@@ -112,4 +133,4 @@ with open("kent_cleaned.csv", "w", newline='', encoding='utf-8') as f:
             "forword": item['forword']
         })
 
-print("✅ All done. Saved as 'kent_cleaned.csv'")
+print("✅ All done. Saved as 'kent_cleaned_final.csv'")
