@@ -2,50 +2,56 @@ import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 
-# Define the base URL
 BASE_URL = "https://www.kentrepertory.com/"
-
-# Define grading color mapping
 COLOR_TO_GRADE = {
     "green": 1,
     "yellow": 2,
     "red": 3
 }
 
-# Read CSV
 df = pd.read_csv("section.csv")
 
-# Iterate through each URL
 for _, row in df.iterrows():
-    name = row['name']
-    relative_url = row['url']
-    full_url = BASE_URL + relative_url
+    section_name = row['name']
+    url = BASE_URL + row['url']
+    print(f"\n=== SECTION: {section_name} ===")
 
-    print(f"\n--- {name} ---")
     try:
-        response = requests.get(full_url, timeout=10)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Find remedy list
-        remedy_list = soup.select('div.panel-body ul.list-inline')[0].find_all('a', class_='remedy')
-        if not remedy_list:
+        # -------- Remedies --------
+        print("\n--- Remedies and Grades ---")
+        remedy_tags = soup.select('div.panel-body ul.list-inline a.remedy')
+
+        if remedy_tags:
+            for tag in remedy_tags:
+                name = tag.text.strip()
+                classes = tag.get("class", [])
+                grade = next(
+                    (COLOR_TO_GRADE[color] for color in COLOR_TO_GRADE if any(color in cls for cls in classes)),
+                    "Unknown"
+                )
+                print(f"{name} => Grade {grade}")
+        else:
             print("No remedies found.")
-            continue
 
-        for remedy in remedy_list:
-            remedy_name = remedy.text.strip()
-            classes = remedy.get('class', [])
-            grade = "Unknown"
+        # -------- Sub-symptoms --------
+        print("\n--- Sub-symptoms ---")
+        sub_symptom_lists = soup.select('ul.list-unstyled.equal-height-list')
 
-            for cls in classes:
-                if "green" in cls:
-                    grade = COLOR_TO_GRADE["green"]
-                elif "yellow" in cls:
-                    grade = COLOR_TO_GRADE["yellow"]
-                elif "red" in cls:
-                    grade = COLOR_TO_GRADE["red"]
+        found_any = False
+        for ul in sub_symptom_lists:
+            links = ul.find_all("a")
+            for link in links:
+                sub_name = link.text.strip()
+                sub_url = BASE_URL + link.get("href")
+                print(f"{sub_name} => {sub_url}")
+                found_any = True
 
-            print(f"{remedy_name} => Grade {grade}")
+        if not found_any:
+            print("No sub-symptoms found.")
+
     except Exception as e:
-        print(f"Error while processing {name}: {e}")
+        print(f"Error while processing section '{section_name}': {e}")
