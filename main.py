@@ -4,98 +4,83 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import json
 import time
+from datetime import datetime
 
 BASE_URL = "https://www.kentrepertory.com/"
-COLOR_TO_GRADE = {
-    "green": 1,
-    "yellow": 2,
-    "red": 3
-}
+COLOR_TO_GRADE = {"green": 1, "yellow": 2, "red": 3}
+
 visited_links = set()
 
-def fetch_and_parse(url: str, depth=0) -> dict:
-    indent = "│   " * depth + "├──"
-
+def fetch_section(url: str, level: int = 0):
     if url in visited_links:
-        print(f"{indent} [SKIP] Already visited: {url}")
-        return {}
+        return None
     visited_links.add(url)
 
-    print(f"{indent} [FETCH] Getting data from: {url}")
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
-    except Exception as e:
-        print(f"{indent} ❌ Error: {e}")
-        return {}
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    result = {
-        "url": url,
-        "remedies": [],
-        "subsymptoms": {}
-    }
-
-    # ==== Extract Remedies ====
-    remedy_tags = soup.select('div.panel-body ul.list-inline a.remedy')
-    grade_counts = {1: 0, 2: 0, 3: 0}
-
-    if remedy_tags:
-        print(f"{indent} [INFO] Remedies found: {len(remedy_tags)}")
+        # Remedies
+        remedies = []
+        remedy_tags = soup.select('div.panel-body ul.list-inline a.remedy')
         for tag in remedy_tags:
             name = tag.text.strip()
             classes = tag.get("class", [])
             grade = next(
                 (COLOR_TO_GRADE[color] for color in COLOR_TO_GRADE if any(color in cls for cls in classes)),
-                None
+                "Unknown"
             )
-            grade_label = f"(Grade {grade})" if grade else "(Unknown grade)"
-            print(f"{indent}    🧪 Remedy: {name} {grade_label}")
-            if grade: grade_counts[grade] += 1
-            result["remedies"].append({"name": name, "grade": grade})
-        print(f"{indent}    📊 Grade summary: " +
-              ", ".join([f"{g}: {c}" for g, c in grade_counts.items()]))
-    else:
-        print(f"{indent} ⚠️ No remedies listed.")
+            remedies.append({"name": name, "grade": grade})
 
-    # ==== Extract Sub-symptoms ====
-    sub_ul_lists = soup.select('ul.list-unstyled.equal-height-list')
-    sub_found = False
+        # Sub-symptoms
+        subsymptoms = {}
+        sub_symptom_lists = soup.select('ul.list-unstyled.equal-height-list')
+        for ul in sub_symptom_lists:
+            for link in ul.find_all("a", href=True):
+                name = link.text.strip()
+                href = urljoin(BASE_URL, link["href"])
+                result = fetch_section(href, level + 1)
+                subsymptoms[name] = result if result else {"remedies": [], "subsymptoms": {}}
 
-    for ul in sub_ul_lists:
-        for li in ul.find_all("li"):
-            a = li.find("a", href=True)
-            if a:
-                name = a.text.strip()
-                link = urljoin(BASE_URL, a['href'])
-                print(f"{indent} [SUB] ➕ Sub-symptom found: {name} ({link})")
-                sub_found = True
-                result["subsymptoms"][name] = fetch_and_parse(link, depth + 1)
+        return {
+            "remedies": remedies,
+            "subsymptoms": subsymptoms
+        }
 
-    if not sub_found:
-        print(f"{indent} [SUB] No sub-symptoms listed.")
+    except Exception as e:
+        print(f"{'  ' * level}❌ Error fetching {url}: {e}")
+        return None
 
-    return result
+def print_section_structure(section_name, section_data, level=0):
+    indent = "  " * level
+    print(f"{indent}- {section_name}")
+    if section_data and "subsymptoms" in section_data:
+        for sub_name in section_data["subsymptoms"]:
+            print_section_structure(sub_name, section_data["subsymptoms"][sub_name], level + 1)
 
-# ==== Main Execution ====
-def main():
-    print("📥 Loading section list from section.csv...\n")
-    df = pd.read_csv("section.csv")
-    data = {}
+# --- MAIN EXECUTION ---
 
-    for i, row in df.iterrows():
-        name = row['name'].strip()
-        url = urljoin(BASE_URL, row['url'])
-        print(f"\n📦 Processing Section [{i+1}/{len(df)}]: {name}")
-        section_data = fetch_and_parse(url)
-        data[name] = section_data
-        print(f"✅ Finished Section: {name}\n" + "-"*80)
+df = pd.read_csv("section.csv")
+full_data = {}
 
-    print("\n💾 Writing data to kentrepertory.json...")
-    with open("kentrepertory.json", "w", encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+for _, row in df.iterrows():
+    section = row["name"]
+    url = urljoin(BASE_URL, row["url"])
+    print(f"\n🔵 START SECTION: {section} at {datetime.now().strftime('%H:%M:%S')}")
+    start_time = time.time()
 
-    print("✅ All done! Data saved to 'kentrepertory.json'.")
+    data = fetch_section(url)
+    full_data[section] = data
 
-if __name__ == "__main__":
-    main()
+    print(f"📑 Structure for section: {section}")
+    print_section_structure(section, data)
+
+    end_time = time.time()
+    print(f"✅ FINISHED SECTION: {section} at {datetime.now().strftime('%H:%M:%S')} | Entries: {len(data.get('subsymptoms', {}))} | Time: {round(end_time - start_time, 2)} sec")
+
+# Save to JSON
+with open("kent_repertory.json", "w", encoding="utf-8") as f:
+    json.dump(full_data, f, indent=2, ensure_ascii=False)
+
+print("\n💾 Data saved to kent_repertory.json")
