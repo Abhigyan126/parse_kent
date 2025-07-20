@@ -236,7 +236,6 @@ class KentRepertoryHierarchyScraper:
                 processed_count += 1
                 
                 # Add delay to be respectful to the server
-                time.sleep(0.5)
                 
                 # Progress indicator
                 if processed_count % 10 == 0:
