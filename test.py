@@ -57,4 +57,4 @@ def display_symptom_info(db_path, symptom_name):
     finally:
         conn.close()
 
-display_symptom_info("kent_repertory.db", "Temples stitching pain")
+display_symptom_info("kent_repertory.db", "Right testis tearing pain extending to abdomen")
